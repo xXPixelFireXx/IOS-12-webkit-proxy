@@ -1,5 +1,5 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const { firefox } = require('playwright');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -8,19 +8,9 @@ let browserInstance = null;
 
 async function getBrowser() {
   if (!browserInstance || !browserInstance.isConnected()) {
-    browserInstance = await puppeteer.launch({
-      headless: 'new',
-      executablePath: process.env.PUPPETEER_EXEC_PATH || undefined,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process'
-      ]
+    browserInstance = await firefox.launch({
+      headless: true,
+      args: ['--no-sandbox']
     });
   }
   return browserInstance;
@@ -40,14 +30,15 @@ app.get('/proxy', async (req, res) => {
   let page = null;
   try {
     const browser = await getBrowser();
-    page = await browser.newPage();
+    context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0'
+    });
+    
+    page = await context.newPage();
 
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-    // Wait until network activity settles
     await page.goto(targetUrl, { 
-      waitUntil: 'networkidle2', 
+      waitUntil: 'networkidle', 
       timeout: 35000 
     });
 
@@ -61,9 +52,9 @@ app.get('/proxy', async (req, res) => {
     if (page) {
       await page.close().catch(() => {});
     }
-    console.error('Headless Browser Error:', err.message);
+    console.error('Firefox Render Error:', err.message);
     res.status(500).send(`
-      <h3>Headless Render Error</h3>
+      <h3>Firefox Render Error</h3>
       <p>${err.message}</p>
       <p><a href="/">Back to Home</a></p>
     `);
@@ -75,23 +66,23 @@ app.get('/', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>iOS 12 Headless Browser Proxy</title>
+      <title>Firefox Headless Proxy</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; background: #f4f6f8; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         input[type="text"] { width: 100%; padding: 12px; margin: 10px 0; box-sizing: border-box; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
-        button { width: 100%; padding: 12px; background: #007aff; color: white; border: none; font-size: 16px; border-radius: 6px; cursor: pointer; }
-        button:hover { background: #0056b3; }
+        button { width: 100%; padding: 12px; background: #ff5722; color: white; border: none; font-size: 16px; border-radius: 6px; cursor: pointer; }
+        button:hover { background: #e64a19; }
       </style>
     </head>
     <body>
       <div class="card">
-        <h2>iOS 12 Headless Proxy</h2>
+        <h2>Firefox Headless Proxy</h2>
         <form action="/proxy" method="get">
           <label>Enter Web Page URL:</label>
           <input type="text" name="url" placeholder="https://www.youtube.com" required>
-          <button type="submit">Render & Browse</button>
+          <button type="submit">Render with Firefox</button>
         </form>
       </div>
     </body>
@@ -100,5 +91,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Headless Browser Proxy running on port ${PORT}`);
+  console.log(`Firefox Headless Proxy running on port ${PORT}`);
 });
