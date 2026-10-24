@@ -1,33 +1,10 @@
-# Use official Node 18 image with built-in Chromium dependencies
-FROM node:18-slim
-
-# Install system dependencies required for Chromium / Puppeteer
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    ca-certificates \
-    procps \
-    libsqlite3-0 \
-    libnss3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libpango-1.0-0 \
-    libcairo2 \
-    && rm -rf /var/lib/apt/lists/*
+# Use Microsoft's official Playwright image (includes system dependencies & browsers pre-installed)
+FROM mcr.microsoft.com/playwright:v1.40.0-jammy
 
 # Set working directory
 WORKDIR /usr/src/app
 
-# Copy package files and install production dependencies
+# Copy package files and install dependencies
 COPY package*.json ./
 RUN npm install --production
 
@@ -36,8 +13,6 @@ COPY . .
 
 # Expose port
 EXPOSE 3000
-
-# Set environment variable so Puppeteer uses headless Chrome properly
 ENV PORT=3000
 
 # Start application
