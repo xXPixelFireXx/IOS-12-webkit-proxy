@@ -1,5 +1,7 @@
 const express = require('express');
 const { firefox } = require('playwright');
+const cheerio = require('cheerio');
+const url = require('url');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,6 +18,25 @@ async function getBrowser() {
   return browserInstance;
 }
 
+// Helper: Rewrite all links, sources, and form actions to go through our proxy
+function rewriteUrls($, targetHost, targetProtocol) {
+  const baseUrl = `${targetProtocol}//${targetHost}`;
+
+  $('[href], [src], [action]').each((_, el) => {
+    ['href', 'src', 'action'].forEach(attr => {
+      const val = el.attribs[attr];
+      if (val && !val.startsWith('data:') && !val.startsWith('javascript:') && !val.startsWith('#') && !val.startsWith('/proxy')) {
+        try {
+          const absoluteUrl = new url.URL(val, baseUrl).href;
+          el.attribs[attr] = `/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+        } catch (e) {
+          // Skip invalid URLs
+        }
+      }
+    });
+  });
+}
+
 app.get('/proxy', async (req, res) => {
   const targetUrl = req.query.url;
 
@@ -28,34 +49,40 @@ app.get('/proxy', async (req, res) => {
   }
 
   let page = null;
+  let context = null;
   try {
     console.log(`Starting render for: ${targetUrl}`);
+    const parsedTarget = new url.URL(targetUrl);
     const browser = await getBrowser();
-    const context = await browser.newContext({
+    
+    context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0'
     });
     
     page = await context.newPage();
 
-    // Changed from 'networkidle' to 'load' so it doesn't hang on background scripts
     await page.goto(targetUrl, { 
       waitUntil: 'load', 
-      timeout: 25000 
+      timeout: 30000 
     });
 
-    const renderedHtml = await page.content();
+    // Grab fully rendered HTML DOM
+    const rawHtml = await page.content();
     await page.close();
     await context.close();
 
-    console.log(`Successfully rendered: ${targetUrl}`);
+    // Parse with Cheerio and rewrite URLs so navigation stays proxied
+    const $ = cheerio.load(rawHtml);
+    rewriteUrls($, parsedTarget.host, parsedTarget.protocol);
+
+    console.log(`Successfully rendered and rewritten: ${targetUrl}`);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.send(renderedHtml);
+    return res.send($.html());
 
   } catch (err) {
-    if (page) {
-      await page.close().catch(() => {});
-    }
+    if (page) await page.close().catch(() => {});
+    if (context) await context.close().catch(() => {});
     console.error('Firefox Render Error:', err.message);
     res.status(500).send(`
       <h3>Firefox Render Error</h3>
@@ -70,7 +97,7 @@ app.get('/', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>IOS 12-B</title>
+      <title>Firefox Headless Proxy</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; background: #f4f6f8; }
