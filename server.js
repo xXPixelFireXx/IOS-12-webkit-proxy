@@ -1,31 +1,31 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
-const url = require('url');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 let browserInstance = null;
 
-// Initialize a single shared browser instance to save memory and speed up requests
 async function getBrowser() {
   if (!browserInstance || !browserInstance.isConnected()) {
     browserInstance = await puppeteer.launch({
       headless: 'new',
+      executablePath: process.env.PUPPETEER_EXEC_PATH || undefined,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
         '--disable-gpu',
-        '--single-process' // Recommended for low-resource cloud containers
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process'
       ]
     });
   }
   return browserInstance;
 }
 
-// Proxy endpoint using Puppeteer headless rendering
 app.get('/proxy', async (req, res) => {
   const targetUrl = req.query.url;
 
@@ -42,17 +42,15 @@ app.get('/proxy', async (req, res) => {
     const browser = await getBrowser();
     page = await browser.newPage();
 
-    // Emulate a modern desktop browser viewport and user agent
     await page.setViewport({ width: 1280, height: 800 });
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    // Navigate to the target website and wait until network activity settles
+    // Wait until network activity settles
     await page.goto(targetUrl, { 
       waitUntil: 'networkidle2', 
       timeout: 35000 
     });
 
-    // Extract the fully rendered HTML DOM after client-side scripts finish executing
     const renderedHtml = await page.content();
     await page.close();
 
@@ -72,13 +70,12 @@ app.get('/proxy', async (req, res) => {
   }
 });
 
-// Simple UI Home Page
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Headless Browser Proxy</title>
+      <title>iOS 12 Headless Browser Proxy</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; background: #f4f6f8; }
@@ -90,7 +87,7 @@ app.get('/', (req, res) => {
     </head>
     <body>
       <div class="card">
-        <h2>Headless Browser Proxy</h2>
+        <h2>iOS 12 Headless Proxy</h2>
         <form action="/proxy" method="get">
           <label>Enter Web Page URL:</label>
           <input type="text" name="url" placeholder="https://www.youtube.com" required>
