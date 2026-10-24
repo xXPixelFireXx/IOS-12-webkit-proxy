@@ -1,13 +1,13 @@
 {
   "name": "IOS 12-B",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "playwright": "^1.40.0"
+    "playwright": "1.40.0"
   },
   "engines": {
     "node": ">=18.0.0"
