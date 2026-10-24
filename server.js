@@ -6,34 +6,49 @@ const url = require('url');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Polyfill scripts injected into every HTML page for iOS 12 WebKit compatibility
+// Enhanced polyfills and client-side request interceptors for legacy WebKit
 const POLYFILL_INJECTION = `
 <script src="https://cdnjs.cloudflare.com/ajax/libs/core-js/3.32.0/minified.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fetch/3.6.20/fetch.umd.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/webcomponentsjs/2.8.0/webcomponents-bundle.js"></script>
 <script>
-  // Global polyfill patches for legacy WebKit
   if (!window.globalThis) window.globalThis = window;
   if (!String.prototype.replaceAll) {
     String.prototype.replaceAll = function(str, newStr) {
       return this.split(str).join(newStr);
     };
   }
+
+  // Intercept relative fetch() calls so dynamic site data loads through the proxy
+  const originalFetch = window.fetch;
+  window.fetch = function(resource, init) {
+    let targetUrl = typeof resource === 'string' ? resource : resource.url;
+    if (targetUrl && !targetUrl.startsWith('http') && !targetUrl.startsWith('/proxy')) {
+      const absoluteUrl = new URL(targetUrl, window.location.href).href;
+      // Extract the original target URL from our current proxy query string if possible
+      const urlParams = new URLSearchParams(window.location.search);
+      const currentProxyTarget = urlParams.get('url');
+      if (currentProxyTarget) {
+        const resolved = new URL(targetUrl, currentProxyTarget).href;
+        arguments[0] = '/proxy?url=' + encodeURIComponent(resolved);
+      }
+    }
+    return originalFetch.apply(this, arguments);
+  };
 </script>
 `;
 
-// Helper: Fix relative URLs inside rewritten HTML
+// Helper: Fix relative URLs and forms inside rewritten HTML
 function rewriteUrls($, targetHost, targetProtocol) {
   const baseUrl = `${targetProtocol}//${targetHost}`;
 
-  $('a[href], link[href], script[src], img[src], video[src], source[src]').each((_, el) => {
-    const attr = el.attribs.href ? 'href' : 'src';
+  // Rewrite links, scripts, images, videos, and form submission actions
+  $('a[href], link[href], script[src], img[src], video[src], source[src], form[action]').each((_, el) => {
+    const attr = el.attribs.href ? 'href' : (el.attribs.src ? 'src' : 'action');
     let val = el.attribs[attr];
 
-    if (val && !val.startsWith('data:') && !val.startsWith('javascript:')) {
+    if (val && !val.startsWith('data:') && !val.startsWith('javascript:') && !val.startsWith('#')) {
       try {
         const absoluteUrl = new url.URL(val, baseUrl).href;
-        // Proxy external assets through our proxy endpoint
         el.attribs[attr] = `/proxy?url=${encodeURIComponent(absoluteUrl)}`;
       } catch (e) {
         // Skip invalid URLs
@@ -41,12 +56,12 @@ function rewriteUrls($, targetHost, targetProtocol) {
     }
   });
 
-  // Strip type="module" tags so legacy browsers attempt parsing fallback scripts
+  // Strip type="module" tags so legacy browsers fall back safely
   $('script[type="module"]').removeAttr('type');
 }
 
-// Proxy endpoint
-app.get('/proxy', async (req, res) => {
+// Proxy endpoint supporting both GET and POST requests (crucial for search forms)
+app.all('/proxy', async (req, res) => {
   const targetUrl = req.query.url;
 
   if (!targetUrl) {
@@ -56,14 +71,14 @@ app.get('/proxy', async (req, res) => {
   try {
     const parsedTarget = new url.URL(targetUrl);
 
-    // Request target page with modern User-Agent or custom client headers
     const response = await axios({
-      method: 'get',
+      method: req.method,
       url: targetUrl,
+      data: req.body,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': req.headers['accept'] || '*/*',
-        'Accept-Encoding': 'identity' // Prevent gzipped raw streams when modifying DOM
+        'Accept-Encoding': 'identity'
       },
       responseType: 'arraybuffer',
       validateStatus: () => true
@@ -71,28 +86,25 @@ app.get('/proxy', async (req, res) => {
 
     const contentType = response.headers['content-type'] || '';
 
-    // If HTML: inject polyfills and rewrite links
+    // If HTML: inject polyfills and rewrite links/forms
     if (contentType.includes('text/html')) {
       const htmlString = response.data.toString('utf-8');
       const $ = cheerio.load(htmlString);
 
-      // Inject core polyfills into the <head>
       if ($('head').length) {
         $('head').prepend(POLYFILL_INJECTION);
       } else {
         $.root().prepend(POLYFILL_INJECTION);
       }
 
-      // Rewrite inline links and media sources to route back through this proxy
       rewriteUrls($, parsedTarget.host, parsedTarget.protocol);
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       return res.send($.html());
     }
 
-    // Pass media/video content directly back with streaming support
+    // Pass media/assets back directly
     Object.keys(response.headers).forEach((key) => {
-      // Omit restrictive security headers that block legacy WebKit
       if (!['content-security-policy', 'strict-transport-security', 'x-frame-options'].includes(key.toLowerCase())) {
         res.setHeader(key, response.headers[key]);
       }
@@ -106,7 +118,7 @@ app.get('/proxy', async (req, res) => {
   }
 });
 
-// UI helper page for entering target website URLs directly from iPad browser
+// UI Home Page
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
