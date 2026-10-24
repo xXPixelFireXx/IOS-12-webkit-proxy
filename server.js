@@ -6,7 +6,7 @@ const url = require('url');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enhanced polyfills and client-side request interceptors for legacy WebKit
+// Expanded polyfills and robust client-side interception
 const POLYFILL_INJECTION = `
 <script src="https://cdnjs.cloudflare.com/ajax/libs/core-js/3.32.0/minified.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/fetch/3.6.20/fetch.umd.js"></script>
@@ -18,18 +18,22 @@ const POLYFILL_INJECTION = `
     };
   }
 
-  // Intercept relative fetch() calls so dynamic site data loads through the proxy
+  // Intercept fetch to route dynamic API calls through proxy
   const originalFetch = window.fetch;
   window.fetch = function(resource, init) {
     let targetUrl = typeof resource === 'string' ? resource : resource.url;
     if (targetUrl && !targetUrl.startsWith('http') && !targetUrl.startsWith('/proxy')) {
-      const absoluteUrl = new URL(targetUrl, window.location.href).href;
-      // Extract the original target URL from our current proxy query string if possible
       const urlParams = new URLSearchParams(window.location.search);
       const currentProxyTarget = urlParams.get('url');
       if (currentProxyTarget) {
-        const resolved = new URL(targetUrl, currentProxyTarget).href;
-        arguments[0] = '/proxy?url=' + encodeURIComponent(resolved);
+        try {
+          const resolved = new URL(targetUrl, currentProxyTarget).href;
+          if (typeof resource === 'string') {
+            arguments[0] = '/proxy?url=' + encodeURIComponent(resolved);
+          } else {
+            resource.url = '/proxy?url=' + encodeURIComponent(resolved);
+          }
+        } catch(e) {}
       }
     }
     return originalFetch.apply(this, arguments);
@@ -37,35 +41,38 @@ const POLYFILL_INJECTION = `
 </script>
 `;
 
-// Helper: Fix relative URLs and forms inside rewritten HTML
+// Helper: Aggressively rewrite all possible URL-bearing attributes
 function rewriteUrls($, targetHost, targetProtocol) {
   const baseUrl = `${targetProtocol}//${targetHost}`;
 
-  // Rewrite links, scripts, images, videos, and form submission actions
-  $('a[href], link[href], script[src], img[src], video[src], source[src], form[action]').each((_, el) => {
-    const attr = el.attribs.href ? 'href' : (el.attribs.src ? 'src' : 'action');
-    let val = el.attribs[attr];
-
-    if (val && !val.startsWith('data:') && !val.startsWith('javascript:') && !val.startsWith('#')) {
-      try {
-        const absoluteUrl = new url.URL(val, baseUrl).href;
-        el.attribs[attr] = `/proxy?url=${encodeURIComponent(absoluteUrl)}`;
-      } catch (e) {
-        // Skip invalid URLs
+  // Target every attribute that could hold a URL or form action
+  $('[href], [src], [action], [data-url], [data-src]').each((_, el) => {
+    ['href', 'src', 'action', 'data-url', 'data-src'].forEach(attr => {
+      const val = el.attribs[attr];
+      if (val && !val.startsWith('data:') && !val.startsWith('javascript:') && !val.startsWith('#') && !val.startsWith('/proxy')) {
+        try {
+          const absoluteUrl = new url.URL(val, baseUrl).href;
+          el.attribs[attr] = `/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+        } catch (e) {
+          // Skip invalid URLs
+        }
       }
-    }
+    });
   });
 
-  // Strip type="module" tags so legacy browsers fall back safely
   $('script[type="module"]').removeAttr('type');
 }
 
-// Proxy endpoint supporting both GET and POST requests (crucial for search forms)
+// Proxy endpoint supporting GET and POST
 app.all('/proxy', async (req, res) => {
   const targetUrl = req.query.url;
 
   if (!targetUrl) {
-    return res.status(400).send('Missing "url" query parameter. Usage: /proxy?url=https://example.com');
+    return res.status(400).send(`
+      <h3>Missing "url" query parameter.</h3>
+      <p>Usage: <a href="/proxy?url=https://example.com">/proxy?url=https://example.com</a></p>
+      <p><a href="/">Back to Home</a></p>
+    `);
   }
 
   try {
@@ -78,7 +85,8 @@ app.all('/proxy', async (req, res) => {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': req.headers['accept'] || '*/*',
-        'Accept-Encoding': 'identity'
+        'Accept-Encoding': 'identity',
+        'Referer': `${parsedTarget.protocol}//${parsedTarget.host}/`
       },
       responseType: 'arraybuffer',
       validateStatus: () => true
@@ -86,7 +94,7 @@ app.all('/proxy', async (req, res) => {
 
     const contentType = response.headers['content-type'] || '';
 
-    // If HTML: inject polyfills and rewrite links/forms
+    // If HTML, parse and rewrite
     if (contentType.includes('text/html')) {
       const htmlString = response.data.toString('utf-8');
       const $ = cheerio.load(htmlString);
@@ -103,7 +111,7 @@ app.all('/proxy', async (req, res) => {
       return res.send($.html());
     }
 
-    // Pass media/assets back directly
+    // Pass non-HTML assets straight through
     Object.keys(response.headers).forEach((key) => {
       if (!['content-security-policy', 'strict-transport-security', 'x-frame-options'].includes(key.toLowerCase())) {
         res.setHeader(key, response.headers[key]);
@@ -118,6 +126,16 @@ app.all('/proxy', async (req, res) => {
   }
 });
 
+// Catch stray requests like /search and redirect them gracefully back to home or error message
+app.use((req, res) => {
+  res.status(404).send(`
+    <h3>Proxy Route Not Found</h3>
+    <p>You tried to access <code>${req.path}</code> directly on the server.</p>
+    <p>Make sure your links use <code>/proxy?url=...</code></p>
+    <p><a href="/">Go to Home</a></p>
+  `);
+});
+
 // UI Home Page
 app.get('/', (req, res) => {
   res.send(`
@@ -127,18 +145,22 @@ app.get('/', (req, res) => {
       <title>iOS 12 Compatibility Proxy</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; }
-        input[type="text"] { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; font-size: 16px; }
-        button { width: 100%; padding: 12px; background: #007aff; color: white; border: none; font-size: 16px; border-radius: 8px; }
+        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; background: #f9f9f9; }
+        input[type="text"] { width: 100%; padding: 12px; margin: 10px 0; box-sizing: border-box; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
+        button { width: 100%; padding: 12px; background: #007aff; color: white; border: none; font-size: 16px; border-radius: 6px; cursor: pointer; }
+        button:hover { background: #0056b3; }
       </style>
     </head>
     <body>
       <h2>iOS 12 Web Proxy</h2>
       <form action="/proxy" method="get">
         <label>Enter Web Page URL:</label>
-        <input type="text" name="url" placeholder="https://example.com" required>
+        <input type="text" name="url" placeholder="https://html.duckduckgo.com" required>
         <button type="submit">Browse via Proxy</button>
       </form>
+      <p style="font-size: 12px; color: #666; margin-top: 20px;">
+        <em>Tip: Heavy web apps like YouTube or ABCmouse require features beyond simple HTML parsing. Try using lightweight or HTML-first sites (like DuckDuckGo HTML or Wikipedia) for the best results on iOS 12.</em>
+      </p>
     </body>
     </html>
   `);
