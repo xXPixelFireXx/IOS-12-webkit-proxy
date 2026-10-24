@@ -66,7 +66,7 @@ app.get('/', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Firefox Headless Proxy</title>
+      <title>IOS 12-B</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
         body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 500px; margin: 0 auto; background: #f4f6f8; }
