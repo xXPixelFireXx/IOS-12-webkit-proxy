@@ -29,22 +29,26 @@ app.get('/proxy', async (req, res) => {
 
   let page = null;
   try {
+    console.log(`Starting render for: ${targetUrl}`);
     const browser = await getBrowser();
-    context = await browser.newContext({
+    const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0'
     });
     
     page = await context.newPage();
 
+    // Changed from 'networkidle' to 'load' so it doesn't hang on background scripts
     await page.goto(targetUrl, { 
-      waitUntil: 'networkidle', 
-      timeout: 35000 
+      waitUntil: 'load', 
+      timeout: 25000 
     });
 
     const renderedHtml = await page.content();
     await page.close();
+    await context.close();
 
+    console.log(`Successfully rendered: ${targetUrl}`);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.send(renderedHtml);
 
@@ -81,7 +85,7 @@ app.get('/', (req, res) => {
         <h2>Firefox Headless Proxy</h2>
         <form action="/proxy" method="get">
           <label>Enter Web Page URL:</label>
-          <input type="text" name="url" placeholder="https://www.youtube.com" required>
+          <input type="text" name="url" placeholder="https://www.google.com" required>
           <button type="submit">Render with Firefox</button>
         </form>
       </div>
